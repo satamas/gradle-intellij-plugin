@@ -92,7 +92,9 @@ abstract class IntelliJPluginSpecBase {
         }
 
     private fun builder(gradleVersion: String, vararg tasks: String) =
-        GradleRunner.create().withProjectDir(dir).withGradleVersion(gradleVersion)
+        GradleRunner.create()
+            .withProjectDir(dir)
+            .withGradleVersion(gradleVersion)
             .withPluginClasspath()
             .withDebug(debugEnabled)
             .withTestKitDir(File(gradleHome))

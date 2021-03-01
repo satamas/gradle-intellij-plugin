@@ -70,12 +70,7 @@ class IntelliJPlugin implements Plugin<Project> {
     void apply(Project project) {
         checkGradleVersion(project)
         project.getPlugins().apply(JavaPlugin)
-        def intellijExtension = project.extensions.create(EXTENSION_NAME, IntelliJPluginExtension) as IntelliJPluginExtension
-        intellijExtension.with {
-            extensionProject = project
-            pluginName = project.name
-            sandboxDirectory = new File(project.buildDir, DEFAULT_SANDBOX).absolutePath
-        }
+        def intellijExtension = project.extensions.create(EXTENSION_NAME, IntelliJPluginExtension, project.objects, project.name, project.buildDir, project) as IntelliJPluginExtension
         configureConfigurations(project, intellijExtension)
         configureTasks(project, intellijExtension)
     }

@@ -1,239 +1,323 @@
 package org.jetbrains.intellij
 
-import com.jetbrains.plugin.structure.intellij.version.IdeVersion
+import groovy.lang.Closure
 import org.gradle.api.Action
 import org.gradle.api.Project
+import org.gradle.api.model.ObjectFactory
 import org.gradle.tooling.BuildException
-import org.jetbrains.annotations.NotNull
-import org.jetbrains.intellij.dependency.*
+import org.jetbrains.intellij.dependency.IdeaDependency
+import org.jetbrains.intellij.dependency.PluginDependency
+import org.jetbrains.intellij.dependency.PluginsRepoConfigurationImpl
+import org.jetbrains.intellij.dependency.PluginsRepository
+import java.io.File
 
 /**
  * Configuration options for the {@link org.jetbrains.intellij.IntelliJPlugin}.
  */
-class IntelliJPluginExtension {
+@Suppress("UnstableApiUsage")
+open class IntelliJPluginExtension(objects: ObjectFactory, projectName: String, projectBuildDir: File, private val project: Project) {
+
+    // TODO: Use IntelliJPlugin.DEFAULT_SANDBOX instead
+    val DEFAULT_SANDBOX = "idea-sandbox"
+
+    // TODO: Use IntelliJPlugin.DEFAULT_INTELLIJ_REPO instead
+    val DEFAULT_INTELLIJ_REPO = "https://cache-redirector.jetbrains.com/www.jetbrains.com/intellij-repository"
+
+    // TODO: Use IntelliJPlugin.DEFAULT_INTELLIJ_PLUGINS_REPO instead
+    val DEFAULT_INTELLIJ_PLUGINS_REPO = "https://cache-redirector.jetbrains.com/plugins.jetbrains.com/maven"
+
+    // TODO: Use IntelliJPlugin.IDEA_CONFIGURATION_NAME instead
+    val IDEA_CONFIGURATION_NAME = "idea"
+
+    // TODO: Use IntelliJPlugin.IDEA_PLUGINS_CONFIGURATION_NAME instead
+    val IDEA_PLUGINS_CONFIGURATION_NAME = "ideaPlugins"
+
+//    @Optional
+//    @Internal
+    private val pluginsProperty = objects.listProperty(Any::class.java).apply {
+        set(emptyList())
+    }
     /**
      * The list of bundled IDE plugins and plugins from the <a href="https://plugins.jetbrains.com/">JetBrains Plugin Repository</a>.
      */
-    Object[] plugins = []
+    var plugins: List<Any>
+        get() = pluginsProperty.getOrElse(emptyList())
+        set(value) = pluginsProperty.set(value)
 
+    private val localPathProperty = objects.property(String::class.java)
     /**
      * The path to locally installed IDE distribution that should be used as a dependency.
      */
-    String localPath
+    var localPath: String?
+        get() = localPathProperty.orNull
+        set(value) = localPathProperty.set(value)
 
+    private val localSourcesPathProperty = objects.property(String::class.java)
     /**
      * The path to local archive with IDE sources.
      */
-    String localSourcesPath
+    var localSourcesPath: String?
+        get() = localSourcesPathProperty.orNull
+        set(value) = localSourcesPathProperty.set(value)
 
+    private val versionProperty = objects.property(String::class.java)
     /**
      * The version of the IntelliJ Platform IDE that will be used to build the plugin.
      * <p/>
      * Please see <a href="https://plugins.jetbrains.com/docs/intellij/plugin-compatibility.html">Plugin Compatibility</a> in SDK docs for more details.
      */
-    String version
+    var version: String?
+        get() {
+            val v = versionProperty.orNull ?: return null
+            if (v.startsWith("JPS-")) {
+                return v.substring(4)
+            }
+            if (v.startsWith("IU-") || v.startsWith("IC-") ||
+                v.startsWith("RD-") || v.startsWith("CL-")
+                || v.startsWith("PY-") || v.startsWith("PC-") || v.startsWith("GO-")) {
+                return v.substring(3)
+            }
+            return v
+        }
+        set(value) = versionProperty.set(value)
 
+    private val typeProperty = objects.property(String::class.java).apply {
+        set("IC")
+    }
     /**
      * The type of IDE distribution (IC, IU, CL, PY, PC, RD or JPS).
      * <p/>
      * The type might be included as a prefix in {@link #version} value.
      */
-    String type = 'IC'
+    var type: String
+        get() {
+            val t = typeProperty.get()
+            val v = versionProperty.orNull ?: return "IC"
 
+            if (v.startsWith("IU-") || "IU" == t) {
+                return "IU"
+            } else if (v.startsWith("JPS-") || "JPS" == t) {
+                return "JPS"
+            } else if (v.startsWith("CL-") || "CL" == t) {
+                return "CL"
+            } else if (v.startsWith("PY-") || "PY" == t) {
+                return "PY"
+            } else if (v.startsWith("PC-") || "PC" == t) {
+                return "PC"
+            } else if (v.startsWith("RD-") || "RD" == t) {
+                return "RD"
+            } else if (v.startsWith("GO-") || "GO" == t) {
+                return "GO"
+            } else {
+                return "IC"
+            }
+        }
+        set(value) = typeProperty.set(value)
+
+    private val pluginNameProperty = objects.property(String::class.java).apply {
+        set(projectName)
+    }
     /**
      * The name of the target zip-archive and defines the name of plugin artifact.
      * By default: <code>${project.name}</code>
      */
-    String pluginName
+    var pluginName: String
+        get() = pluginNameProperty.get()
+        set(value) = pluginNameProperty.set(value)
 
+    private val updateSinceUntilBuildProperty = objects.property(Boolean::class.java).apply {
+        set(true)
+    }
     /**
      * Patch plugin.xml with since and until build values inferred from IDE version.
      */
-    boolean updateSinceUntilBuild = true
+    var updateSinceUntilBuild: Boolean
+        get() = updateSinceUntilBuildProperty.get()
+        set(value) = updateSinceUntilBuildProperty.set(value)
 
+    private val sameSinceUntilBuildProperty = objects.property(Boolean::class.java).apply {
+        set(false)
+    }
     /**
      * Patch plugin.xml with an until build value that is just an "open" since build.
      */
-    boolean sameSinceUntilBuild = false
+    var sameSinceUntilBuild: Boolean
+        get() = sameSinceUntilBuildProperty.get()
+        set(value) = sameSinceUntilBuildProperty.set(value)
 
+    private val instrumentCodeProperty = objects.property(Boolean::class.java).apply {
+        set(true)
+    }
     /**
      * Instrument Java classes with nullability assertions and compile forms created by IntelliJ GUI Designer.
      */
-    boolean instrumentCode = true
+    var instrumentCode: Boolean
+        get() = instrumentCodeProperty.get()
+        set(value) = instrumentCodeProperty.set(value)
 
+    private val alternativeIdePathProperty = objects.property(String::class.java)
     /**
      * The absolute path to the locally installed JetBrains IDE, which is used for running.
      * <p/>
      * @deprecated use `ideDirectory` option in `runIde` and `buildSearchableOptions` task instead.
      */
-    @Deprecated
-    String alternativeIdePath
+    @Deprecated("Use `ideDirectory` option in `runIde` and `buildSearchableOptions` task instead.")
+    var alternativeIdePath: String?
+        get() = alternativeIdePathProperty.orNull
+        set(value) = alternativeIdePathProperty.set(value)
 
+    private val sandboxDirectoryProperty = objects.property(String::class.java).apply {
+        set(File(projectBuildDir, DEFAULT_SANDBOX).absolutePath)
+    }
     /**
      * The path of sandbox directory that is used for running IDE with developing plugin.
      * By default: <code>${project.buildDir}/idea-sandbox</code>.
      */
-    String sandboxDirectory
+    var sandboxDirectory: String
+        get() = sandboxDirectoryProperty.get()
+        set(value) = sandboxDirectoryProperty.set(value)
 
+    private val intellijRepoProperty = objects.property(String::class.java).apply {
+        set(DEFAULT_INTELLIJ_REPO)
+    }
     /**
      * Url of repository for downloading IDE distributions.
      */
-    String intellijRepo = IntelliJPlugin.DEFAULT_INTELLIJ_REPO
+    var intellijRepo: String
+        get() = intellijRepoProperty.get()
+        set(value) = intellijRepoProperty.set(value)
 
+    private val pluginsRepoProperty = objects.property(String::class.java).apply {
+        set(DEFAULT_INTELLIJ_PLUGINS_REPO)
+    }
     /**
      * Url of repository for downloading plugin dependencies.
      *
      * @deprecated Use closure syntax to configure multiple repositories
      */
-    @Deprecated
-    String pluginsRepo = IntelliJPlugin.DEFAULT_INTELLIJ_PLUGINS_REPO
+    @Deprecated("Use closure syntax to configure multiple repositories.")
+    var pluginsRepo: String
+        get() = pluginsRepoProperty.get()
+        set(value) = pluginsRepoProperty.set(value)
 
     /**
      * Returns object to configure multiple repositories for downloading plugins.
      */
-    PluginsRepoConfiguration pluginsRepo() {
+    fun pluginsRepo(): PluginsRepoConfiguration {
         if (pluginsRepoConfiguration == null) {
-            pluginsRepoConfiguration = new PluginsRepoConfigurationImpl(project)
+            pluginsRepoConfiguration = PluginsRepoConfigurationImpl(project)
         }
-        return pluginsRepoConfiguration
+        return pluginsRepoConfiguration!!
     }
 
     /**
      * Configure multiple repositories for downloading plugins.
      */
-    void pluginsRepo(Closure<?> block) {
-        this.project.configure(pluginsRepo(), block)
+    fun pluginsRepo( block: Closure<Any>) {
+        project.configure(pluginsRepo(), block)
     }
 
     /**
      * Configure multiple repositories for downloading plugins.
      */
-    void pluginsRepo(Action<PluginsRepoConfiguration> block) {
+    fun pluginsRepo(block: Action<PluginsRepoConfiguration>) {
         block.execute(pluginsRepo())
     }
 
-
+    private val jreRepoProperty = objects.property(String::class.java)
     /**
      * Url of repository for downloading JetBrains Java Runtime.
      */
-    String jreRepo
+    var jreRepo: String?
+        get() = jreRepoProperty.orNull
+        set(value) = jreRepoProperty.set(value)
 
+    private val ideaDependencyCachePathProperty = objects.property(String::class.java)
     /**
      * The absolute path to the local directory that should be used for storing IDE distributions.
      */
-    String ideaDependencyCachePath
+    var ideaDependencyCachePath: String?
+        get() = ideaDependencyCachePathProperty.orNull
+        set(value) = ideaDependencyCachePathProperty.set(value)
 
+    private val downloadSourcesProperty = objects.property(Boolean::class.java).apply {
+        set(!System.getenv().containsKey("CI"))
+    }
     /**
      * Download IntelliJ sources while configuring Gradle project.
      */
-    boolean downloadSources = !System.getenv().containsKey('CI')
+    var downloadSources: Boolean
+        get() = downloadSourcesProperty.get()
+        set(value) = downloadSourcesProperty.set(value)
 
+    private val configureDefaultDependenciesProperty = objects.property(Boolean::class.java).apply {
+        set(!System.getenv().containsKey("CI"))
+    }
     /**
      * Turning it off disables configuring dependencies to intellij sdk jars automatically,
      * instead the intellij, intellijPlugin and intellijPlugins functions could be used for an explicit configuration
      */
-    boolean configureDefaultDependencies = true
+    var configureDefaultDependencies: Boolean
+        get() = configureDefaultDependenciesProperty.get()
+        set(value) = configureDefaultDependenciesProperty.set(value)
 
+    private val extraDependenciesProperty = objects.listProperty(String::class.java).apply {
+        set(emptyList())
+    }
     /**
      * configure extra dependency artifacts from intellij repo
      *  the dependencies on them could be configured only explicitly using intellijExtra function in the dependencies block
      */
-    Object[] extraDependencies = []
+    var extraDependencies: List<String>
+        get() = extraDependenciesProperty.getOrElse(emptyList())
+        set(value) = extraDependenciesProperty.set(value)
 
-    private Project project
-    private IdeaDependency ideaDependency
-    private final Set<PluginDependency> pluginDependencies = new HashSet<>()
-    private boolean pluginDependenciesConfigured = false
-    private PluginsRepoConfigurationImpl pluginsRepoConfiguration = null
 
-    def setExtensionProject(@NotNull Project project) {
-        this.project = project
-    }
-
-    String getType() {
-        if (version == null) {
-            return 'IC'
+    var ideaDependency: IdeaDependency? = null
+        get() {
+            if (field == null) {
+                debug(project, "IDE dependency is resolved", Throwable())
+                project.configurations.getByName(IDEA_CONFIGURATION_NAME).resolve()
+                if (field == null) {
+                    throw BuildException("Cannot resolve ideaDependency", null)
+                }
+            }
+            return field
         }
-        if (version.startsWith('IU-') || 'IU' == type) {
-            return 'IU'
-        } else if (version.startsWith('JPS-') || 'JPS' == type) {
-            return "JPS"
-        } else if (version.startsWith('CL-') || 'CL' == type) {
-            return 'CL'
-        } else if (version.startsWith('PY-') || 'PY' == type) {
-            return 'PY'
-        } else if (version.startsWith('PC-') || 'PC' == type) {
-            return 'PC'
-        } else if (version.startsWith('RD-') || 'RD' == type) {
-            return 'RD'
-        } else if (version.startsWith('GO-') || 'GO' == type) {
-            return 'GO'
-        } else {
-            return 'IC'
-        }
-    }
 
-    String getVersion() {
-        if (version == null) {
-            return null
-        }
-        if (version.startsWith('JPS-')) {
-            return version.substring(4)
-        }
-        if (version.startsWith('IU-') || version.startsWith('IC-') ||
-                version.startsWith('RD-') || version.startsWith('CL-')
-                || version.startsWith('PY-') || version.startsWith('PC-') || version.startsWith('GO-')) {
-            return version.substring(3)
-        }
-        return version
-    }
+    private var pluginDependenciesConfigured = false
+    private var pluginsRepoConfiguration: PluginsRepoConfigurationImpl? = null
+    private val pluginDependencies = mutableSetOf<PluginDependency>()
 
-    String getBuildVersion() {
-        return IdeVersion.createIdeVersion(getIdeaDependency().buildNumber).asStringWithoutProductCode()
-    }
+//    fun getBuildVersion(): String = IdeVersion.createIdeVersion(ideaDependency.buildNumber).asStringWithoutProductCode()
 
-    def addPluginDependency(@NotNull PluginDependency pluginDependency) {
+    fun addPluginDependency(pluginDependency: PluginDependency) {
         pluginDependencies.add(pluginDependency)
     }
 
-    Set<PluginDependency> getUnresolvedPluginDependencies() {
+    fun getUnresolvedPluginDependencies(): Set<PluginDependency> {
         if (pluginDependenciesConfigured) {
-            return []
+            return emptySet()
         }
         return pluginDependencies
     }
 
-    Set<PluginDependency> getPluginDependencies() {
+    fun getPluginDependencies(): Set<PluginDependency> {
         if (!pluginDependenciesConfigured) {
-            Utils.debug(project, "Plugin dependencies are resolved", new Throwable())
-            project.configurations.getByName(IntelliJPlugin.IDEA_PLUGINS_CONFIGURATION_NAME).resolve()
+            debug(project, "Plugin dependencies are resolved", Throwable())
+            project.configurations.getByName(IDEA_PLUGINS_CONFIGURATION_NAME).resolve()
             pluginDependenciesConfigured = true
         }
         return pluginDependencies
     }
 
-    def setIdeaDependency(IdeaDependency ideaDependency) {
-        this.ideaDependency = ideaDependency
-    }
 
-    IdeaDependency getIdeaDependency() {
-        if (ideaDependency == null) {
-            Utils.debug(project, "IDE dependency is resolved", new Throwable())
-            project.configurations.getByName(IntelliJPlugin.IDEA_CONFIGURATION_NAME).resolve()
-            if (ideaDependency == null) {
-                throw new BuildException("Cannot resolve ideaDependency", null)
-            }
-        }
-        return ideaDependency
-    }
-
-    @NotNull
-    List<PluginsRepository> getPluginsRepos() {
+    fun getPluginsRepos(): List<PluginsRepository> {
         if (pluginsRepoConfiguration == null) {
             //noinspection GrDeprecatedAPIUsage
             pluginsRepo().maven(this.pluginsRepo)
         }
-        return pluginsRepoConfiguration.getRepositories()
+        return pluginsRepoConfiguration!!.getRepositories()
     }
 
     interface PluginsRepoConfiguration {
@@ -241,19 +325,18 @@ class IntelliJPluginExtension {
         /**
          * Use default marketplace repository
          */
-        void marketplace()
+        fun marketplace()
 
         /**
          * Use a Maven repository with plugin artifacts
          */
-        void maven(@NotNull String url)
+        fun maven(url: String)
 
         /**
          * Use custom plugin repository. The URL should point to the `plugins.xml` or `updatePlugins.xml` file.
          */
-        void custom(@NotNull String url)
+        fun custom(url: String)
 
-        List<PluginsRepository> getRepositories()
+        fun getRepositories(): List<PluginsRepository>
     }
-
 }
