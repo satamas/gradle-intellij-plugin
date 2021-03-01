@@ -1,36 +1,27 @@
 package org.jetbrains.intellij.dependency
 
 import org.gradle.api.Project
-import org.jetbrains.annotations.NotNull
-import org.jetbrains.intellij.IntelliJPlugin
 import org.jetbrains.intellij.IntelliJPluginExtension
+import java.util.Collections
 
-class PluginsRepoConfigurationImpl implements IntelliJPluginExtension.PluginsRepoConfiguration {
+class PluginsRepoConfigurationImpl(val project: Project) : IntelliJPluginExtension.PluginsRepoConfiguration {
 
-    private List<PluginsRepository> pluginsRepositories = new ArrayList<>()
-    private Project project
+    // TODO: Use IntelliJPlugin.DEFAULT_INTELLIJ_PLUGINS_REPO instead
+    val DEFAULT_INTELLIJ_PLUGINS_REPO = "https://cache-redirector.jetbrains.com/plugins.jetbrains.com/maven"
 
-    PluginsRepoConfigurationImpl(Project project) {
-        this.project = project
+    private val pluginsRepositories = mutableListOf<PluginsRepository>()
+
+    override fun marketplace() {
+        pluginsRepositories.add(MavenPluginsRepository(project, DEFAULT_INTELLIJ_PLUGINS_REPO))
     }
 
-    @Override
-    void marketplace() {
-        pluginsRepositories.add(new MavenPluginsRepository(project, IntelliJPlugin.DEFAULT_INTELLIJ_PLUGINS_REPO))
+    override fun maven(url: String) {
+        pluginsRepositories.add(MavenPluginsRepository(project, url))
     }
 
-    @Override
-    void maven(@NotNull String url) {
-        pluginsRepositories.add(new MavenPluginsRepository(project, url))
+    override fun custom(url: String) {
+        pluginsRepositories.add(CustomPluginsRepository(project, url))
     }
 
-    @Override
-    void custom(@NotNull String url) {
-        pluginsRepositories.add(new CustomPluginsRepository(project, url))
-    }
-
-    @Override
-    List<PluginsRepository> getRepositories() {
-        return Collections.unmodifiableList(pluginsRepositories)
-    }
+    override fun getRepositories(): List<PluginsRepository> = Collections.unmodifiableList(pluginsRepositories)
 }
