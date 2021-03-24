@@ -37,6 +37,7 @@ import org.jetbrains.intellij.tasks.*
 class IntelliJPlugin implements Plugin<Project> {
     public static final GROUP_NAME = "intellij"
     public static final EXTENSION_NAME = "intellij"
+    public static final SIGNING_EXTENSION_NAME = "signing"
     public static final String DEFAULT_SANDBOX = 'idea-sandbox'
     public static final String PATCH_PLUGIN_XML_TASK_NAME = "patchPluginXml"
     public static final String PLUGIN_XML_DIR_NAME = "patchedPluginXmlFiles"
@@ -52,6 +53,7 @@ class IntelliJPlugin implements Plugin<Project> {
     public static final String SEARCHABLE_OPTIONS_DIR_NAME = "searchableOptions"
     public static final String JAR_SEARCHABLE_OPTIONS_TASK_NAME = "jarSearchableOptions"
     public static final String BUILD_PLUGIN_TASK_NAME = "buildPlugin"
+    public static final String SIGN_PLUGIN_TASK_NAME = "signPlugin"
     public static final String PUBLISH_PLUGIN_TASK_NAME = "publishPlugin"
 
     public static final String IDEA_CONFIGURATION_NAME = "idea"
@@ -70,9 +72,12 @@ class IntelliJPlugin implements Plugin<Project> {
     void apply(Project project) {
         checkGradleVersion(project)
         project.getPlugins().apply(JavaPlugin)
+
         def intellijExtension = project.extensions.create(EXTENSION_NAME, IntelliJPluginExtension, project.objects, project.name, project.buildDir, project) as IntelliJPluginExtension
+        def signingExtension = project.extensions.create(SIGNING_EXTENSION_NAME, SigningExtension, project.objects) as SigningExtension
+
         configureConfigurations(project, intellijExtension)
-        configureTasks(project, intellijExtension)
+        configureTasks(project, intellijExtension, signingExtension)
     }
 
     private static void checkGradleVersion(@NotNull Project project) {
@@ -97,7 +102,11 @@ class IntelliJPlugin implements Plugin<Project> {
         project.configurations.getByName(JavaPlugin.TEST_IMPLEMENTATION_CONFIGURATION_NAME).extendsFrom defaultDependencies, idea, ideaPlugins
     }
 
-    private static def configureTasks(@NotNull Project project, @NotNull IntelliJPluginExtension extension) {
+    private static void configureTasks(
+            @NotNull Project project,
+            @NotNull IntelliJPluginExtension extension,
+            @NotNull SigningExtension signingExtension
+    ) {
         Utils.info(project, "Configuring plugin")
         project.tasks.whenTaskAdded {
             if (it instanceof RunIdeBase) {
@@ -117,6 +126,7 @@ class IntelliJPlugin implements Plugin<Project> {
         configureBuildSearchableOptionsTask(project, extension)
         configureJarSearchableOptionsTask(project)
         configureBuildPluginTask(project)
+        configureSignPluginTask(project, signingExtension)
         configurePublishPluginTask(project)
         configureProcessResources(project)
         configureInstrumentation(project, extension)
@@ -420,7 +430,7 @@ class IntelliJPlugin implements Plugin<Project> {
             description = "Runs the IntelliJ Plugin Verifier tool to check the binary compatibility with specified IntelliJ IDE builds."
             conventionMapping('failureLevel', { EnumSet.of(RunPluginVerifierTask.FailureLevel.INVALID_PLUGIN) })
             conventionMapping('verifierVersion', { VERIFIER_VERSION_LATEST })
-            conventionMapping('distributionFile', { resolveDistributionFile(project) })
+            conventionMapping('distributionFile', { resolveBuildTaskOutput(project) })
             conventionMapping('verificationReportsDirectory', { "${project.buildDir}/reports/pluginVerifier".toString() })
             conventionMapping('downloadDirectory', { ideDownloadDirectory().toString() })
             dependsOn { project.getTasksByName(BUILD_PLUGIN_TASK_NAME, false) }
@@ -666,14 +676,40 @@ class IntelliJPlugin implements Plugin<Project> {
         }
     }
 
+    private static void configureSignPluginTask(@NotNull Project project, @NotNull SigningExtension signingExtension) {
+        Utils.info(project, "Configuring sign plugin task")
+        Zip buildPluginTask = project.tasks.findByName(BUILD_PLUGIN_TASK_NAME) as Zip
+        def inputFile = buildPluginTask.archiveFile.get().asFile
+        def inputFileExtension = inputFile.path.substring(inputFile.path.lastIndexOf('.'))
+        def inputFileWithoutExtension = inputFile.path.substring(0, inputFile.path.lastIndexOf('.'))
+        def outputFilePath = inputFileWithoutExtension + '-signed' + inputFileExtension
+
+        project.tasks.create(SIGN_PLUGIN_TASK_NAME, SignPluginTask).with {
+            group = GROUP_NAME
+            description = "Sign plugin with your private key and certificate chain."
+            onlyIf { signingExtension.enabledProperty.get() }
+            certificateChain.set(signingExtension.certificateChainProperty)
+            privateKey.set(signingExtension.privateKeyProperty)
+            inputArchiveFile.set(resolveBuildTaskOutput(project))
+            outputArchiveFile.set(new File(outputFilePath))
+            dependsOn { project.getTasksByName(BUILD_PLUGIN_TASK_NAME, false) }
+        }
+    }
+
     private static void configurePublishPluginTask(@NotNull Project project) {
         Utils.info(project, "Configuring publish plugin task")
-        project.tasks.create(PUBLISH_PLUGIN_TASK_NAME, PublishTask).with {
+
+        def publishTask = project.tasks.create(PUBLISH_PLUGIN_TASK_NAME, PublishTask).with {
             group = GROUP_NAME
             description = "Publish plugin distribution on plugins.jetbrains.com."
-            conventionMapping('distributionFile', { resolveDistributionFile(project) })
+
             dependsOn { project.getTasksByName(BUILD_PLUGIN_TASK_NAME, false) }
             dependsOn { project.getTasksByName(VERIFY_PLUGIN_TASK_NAME, false) }
+            dependsOn { project.getTasksByName(SIGN_PLUGIN_TASK_NAME, false) }
+        }
+
+        project.afterEvaluate {
+            publishTask.conventionMapping('distributionFile', { resolveDistributionFile(project) })
         }
     }
 
@@ -689,6 +725,21 @@ class IntelliJPlugin implements Plugin<Project> {
     }
 
     private static File resolveDistributionFile(@NotNull Project project) {
+        def buildPluginTask = project.tasks.findByName(BUILD_PLUGIN_TASK_NAME) as Zip
+        def signPluginTask = project.tasks.findByName(SIGN_PLUGIN_TASK_NAME) as SignPluginTask
+        def signingExtension = project.extensions.findByName(SIGNING_EXTENSION_NAME) as SigningExtension
+
+        if (signingExtension.enabled) {
+            return signPluginTask.outputArchiveFile.get().asFile
+        }
+
+        def distributionFile =
+                VersionNumber.parse(project.gradle.gradleVersion) >= VersionNumber.parse("5.1")
+                        ? buildPluginTask?.archiveFile?.getOrNull()?.asFile : buildPluginTask.archivePath
+        return distributionFile?.exists() ? distributionFile : null
+    }
+
+    private static File resolveBuildTaskOutput(@NotNull Project project) {
         def buildPluginTask = project.tasks.findByName(BUILD_PLUGIN_TASK_NAME) as Zip
         def distributionFile =
                 VersionNumber.parse(project.gradle.gradleVersion) >= VersionNumber.parse("5.1")
