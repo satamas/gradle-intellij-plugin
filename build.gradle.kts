@@ -4,7 +4,7 @@ plugins {
     kotlin("jvm") version "1.5.0"
     id("java-gradle-plugin")
     id("maven-publish")
-    id("com.gradle.plugin-publish") version "0.14.0"
+    id("com.gradle.plugin-publish") version "1.0.0"
     id("synapticloop.documentr") version "3.1.0"
     id("com.github.breadmoirai.github-release") version "2.2.12"
     id("org.jetbrains.changelog") version "1.1.2"
